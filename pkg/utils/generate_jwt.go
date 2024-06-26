@@ -7,15 +7,15 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 )
 
-func GenerateJWT(user models.Users) (string, error){
+func GenerateJWT(user models.Users) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.User_id,
-		"email": user.Email,
+		"user_id":  user.User_id,
+		"email":    user.Email,
 		"password": user.Password,
 	})
 
 	signedToken, err := token.SignedString([]byte(configs.GetConfig().JWTSecretKey))
-	if err != nil{
+	if err != nil {
 		return "", err
 	}
 
