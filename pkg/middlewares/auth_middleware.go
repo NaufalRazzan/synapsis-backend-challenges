@@ -38,6 +38,10 @@ func VerifyAuth() fiber.Handler{
 			})
 		}
 
+		claims := token.Claims.(jwt.MapClaims)
+
+		c.Locals("user_id", claims["user_id"].(string))
+
 		return c.Next()
 	}
 }
