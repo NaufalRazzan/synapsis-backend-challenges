@@ -7,13 +7,39 @@ import (
 	"synapsis-backend-test/pkg/db"
 	"time"
 
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-func InsertProductToShoppingCart(product_id string, user_id string, amount uint64) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func getUserId(user_name string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client, collectionName, err := db.ConnectDB("users")
+	if err != nil {
+		return "", err
+	}
+	defer client.Disconnect(ctx)
+
+	filter := bson.M{
+		"full_name": user_name,
+	}
+
+	var userData models.Users
+
+	if err := collectionName.FindOne(ctx, filter).Decode(&userData); err != nil {
+		fmt.Println("error here")
+		return "", err
+	}
+
+	return userData.User_id, nil
+
+}
+
+func InsertProductToShoppingCart(product_id string, user_name string, amount int64) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), (30*time.Second)*2)
 	defer cancel()
 
 	// get product data
@@ -40,7 +66,9 @@ func InsertProductToShoppingCart(product_id string, user_id string, amount uint6
 
 	// decrement product stock
 	update := bson.M{
-		"$inc": -amount,
+		"$inc": bson.M{
+			"stock": -amount,
+		},
 	}
 
 	if err := productCollection.FindOneAndUpdate(ctx, filter, update).Decode(&resProduct); err != nil {
@@ -64,12 +92,19 @@ func InsertProductToShoppingCart(product_id string, user_id string, amount uint6
 	}
 	defer trxClient.Disconnect(ctx)
 
+	// get user id
+	user_id, err := getUserId(user_name)
+	if err != nil {
+		return "", err
+	}
+
 	trxPayload := models.Transactions{
-		Product_id:  product_id,
-		User_id:     user_id,
-		Amount:      amount,
-		Total_price: amount * resProduct.Price,
-		Has_bought:  false,
+		Transaction_id: uuid.NewString(),
+		Product_id:     product_id,
+		User_id:        user_id,
+		Amount:         amount,
+		Total_price:    amount * resProduct.Price,
+		Has_bought:     false,
 	}
 
 	res, err := trxCollection.InsertOne(ctx, trxPayload)
@@ -82,8 +117,8 @@ func InsertProductToShoppingCart(product_id string, user_id string, amount uint6
 	return resultID.String(), nil
 }
 
-func ViewShoppingCartLists(user_id string) ([]models.ViewShoppingCartResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func ViewShoppingCartLists(user_name string) ([]models.ViewShoppingCartResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client, trxCollection, err := db.ConnectDB("transactions")
@@ -92,11 +127,16 @@ func ViewShoppingCartLists(user_id string) ([]models.ViewShoppingCartResponse, e
 	}
 	defer client.Disconnect(ctx)
 
+	user_id, err := getUserId(user_name)
+	if err != nil {
+		return nil, err
+	}
+
 	pipeline := []bson.M{
 		{
 			"$match": bson.M{
 				"$and": []bson.M{
-					{"user_id": user_id,},
+					{"user_id": user_id},
 					{"has_bought": false},
 				},
 			},
@@ -114,18 +154,16 @@ func ViewShoppingCartLists(user_id string) ([]models.ViewShoppingCartResponse, e
 		},
 		{
 			"$project": bson.M{
-				"_id":         0,
+				"_id":            0,
 				"transaction_id": "$transaction_id",
-				"amount":      "$amount",
-				"total_price": "$total_price",
-				"products": bson.A{
-					bson.M{
-						"product_id":   "$joinedProducts.product_id",
-						"product_name": "$joinedProducts.product_name",
-						"price":        "$joinedProducts.price",
-						"stock":        "$joinedProducts.stock",
-						"category":     "$joinedProducts.category",
-					},
+				"amount":         "$amount",
+				"total_price":    "$total_price",
+				"products": bson.M{
+					"product_id":   "$joinedProducts.product_id",
+					"product_name": "$joinedProducts.product_name",
+					"price":        "$joinedProducts.price",
+					"stock":        "$joinedProducts.stock",
+					"category":     "$joinedProducts.category",
 				},
 			},
 		},
@@ -145,7 +183,7 @@ func ViewShoppingCartLists(user_id string) ([]models.ViewShoppingCartResponse, e
 }
 
 func DeleteProductFromShoppingCart(trx_id string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client, trxCollection, err := db.ConnectDB("transactions")
@@ -158,25 +196,44 @@ func DeleteProductFromShoppingCart(trx_id string) error {
 		"transaction_id": trx_id,
 	}
 
-	result, err := trxCollection.DeleteOne(ctx, filter)
-	if err != nil{
+	var deletedData models.Transactions
+
+	if err := trxCollection.FindOneAndDelete(ctx, filter).Decode(&deletedData); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return fmt.Errorf("no data exists to be deleted")
+		}
 		return err
 	}
-	if result.DeletedCount == 0{
-		return fmt.Errorf("no data exists to be deleted")
+
+	// update product stock
+	productClient, productCollection, err := db.ConnectDB("products")
+	if err != nil {
+		return err
+	}
+	defer productClient.Disconnect(ctx)
+
+	productFilter := bson.M{
+		"product_id": deletedData.Product_id,
+	}
+	productUpdate := bson.M{
+		"$inc": bson.M{
+			"stock": deletedData.Amount,
+		},
+	}
+
+	if _, err := productCollection.UpdateOne(ctx, productFilter, productUpdate); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func CheckoutToPayment(trx_id string) error{
-	var trxData models.Transactions
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func CheckoutToPayment(trx_id string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	trxClient, trxCollection, err := db.ConnectDB("transactions")
-	if err != nil{
+	if err != nil {
 		return err
 	}
 	defer trxClient.Disconnect(ctx)
@@ -191,27 +248,12 @@ func CheckoutToPayment(trx_id string) error{
 		},
 	}
 
-	
-	if err := trxCollection.FindOneAndUpdate(ctx, trxFilter, trxUpdate).Decode(&trxData); err != nil{
+	res, err := trxCollection.UpdateOne(ctx, trxFilter, trxUpdate)
+	if err != nil {
 		return err
 	}
-
-	// update product stock
-	productClient, productCollection, err := db.ConnectDB("products")
-	if err != nil{
-		return err
-	}
-	defer productClient.Disconnect(ctx)
-
-	productFilter := bson.M{
-		"product_id": trxData.Product_id,
-	}
-	productUpdate := bson.M{
-		"$inc": trxData.Amount,
-	}
-
-	if _, err := productCollection.UpdateOne(ctx, productFilter, productUpdate); err != nil{
-		return err
+	if res.ModifiedCount == 0 {
+		return fmt.Errorf("no document modified")
 	}
 
 	return nil

@@ -14,7 +14,7 @@ import (
 )
 
 func SignIn(email string, password string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client, collectionName, err := db.ConnectDB("users")
@@ -26,10 +26,7 @@ func SignIn(email string, password string) (string, error) {
 	var user models.Users
 
 	filter := bson.M{
-		"$and": []bson.M{
-			{"email": email},
-			{"password": password},
-		},
+		"email": email,
 	}
 
 	if err := collectionName.FindOne(ctx, filter).Decode(&user); err != nil{
@@ -42,6 +39,7 @@ func SignIn(email string, password string) (string, error) {
 	// verify password
 	if err := utils.ComparePasswords(password, user.Password); err != nil{
 		if err == bcrypt.ErrMismatchedHashAndPassword{
+			fmt.Println("salah pass")
 			return "", fmt.Errorf("invalid email or password")
 		}
 		return "", err

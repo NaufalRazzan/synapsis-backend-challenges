@@ -10,10 +10,11 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 func SignUp(user models.Users) (string, error){
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client, collectionName, err := db.ConnectDB("users")
@@ -42,6 +43,10 @@ func SignUp(user models.Users) (string, error){
 	}
 	user.Password = hashedPassword
 
+	// generate uuid
+	id := uuid.New()
+	user.User_id = id.String()
+	
 	// insert to mongo
 	result, err := collectionName.InsertOne(ctx, user)
 	if err != nil{
