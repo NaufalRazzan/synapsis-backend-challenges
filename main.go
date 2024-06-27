@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	api "synapsis-backend-test/routes"
 	"fmt"
 	"io"
 	"log"
@@ -91,6 +92,7 @@ func main(){
 	app := setApp(file)
 
 	// register routes
+	api.Routes(app)
 
 	if err := app.Listen(fmt.Sprintf(":%s", configs.GetConfig().Port)); err != nil{
 		log.New(file, "[ERROR] ", log.Ldate|log.Ltime).Println("Application failed to start running: ", err)
